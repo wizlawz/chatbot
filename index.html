@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark" />
+    <link rel="icon" href="data:," />
+    <title>Chat</title>
+    <style>
+      * { box-sizing: border-box; }
+      html, body { height: 100%; }
+      body {
+        margin: 0;
+        background: #121417;
+        color: #eceff3;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        font-size: 17px;
+        line-height: 1.5;
+      }
+      .wrap {
+        max-width: 720px;
+        margin: 0 auto;
+        min-height: 100dvh;
+        display: flex;
+        flex-direction: column;
+        padding: 20px 16px calc(16px + env(safe-area-inset-bottom));
+      }
+      h1 {
+        margin: 4px 0 2px;
+        font-size: 30px;
+        font-weight: 700;
+        letter-spacing: -0.01em;
+      }
+      #counter {
+        min-height: 1.4em;
+        margin: 0 0 8px;
+        font-size: 13px;
+        letter-spacing: 0.08em;
+        color: #9aa3ad;
+      }
+      .intro {
+        margin: 0 0 20px;
+        color: #c9d1d9;
+        font-size: 16px;
+      }
+      #loadBtn {
+        width: 100%;
+        min-height: 64px;
+        padding: 14px 20px;
+        font: inherit;
+        font-size: 19px;
+        font-weight: 600;
+        color: #ffffff;
+        background: #2f6f4f;
+        border: none;
+        border-radius: 10px;
+        cursor: pointer;
+      }
+      #loadBtn:disabled {
+        background: #3a4046;
+        color: #9aa3ad;
+        cursor: default;
+      }
+      #loadBtn:not(:disabled):active { background: #26593f; }
+      #progressWrap {
+        display: none;
+        margin-top: 16px;
+      }
+      #progressWrap.visible { display: block; }
+      progress {
+        width: 100%;
+        height: 14px;
+        appearance: none;
+        -webkit-appearance: none;
+        border: none;
+        border-radius: 7px;
+        background: #262b31;
+        overflow: hidden;
+      }
+      progress::-webkit-progress-bar { background: #262b31; }
+      progress::-webkit-progress-value { background: #4caf7d; }
+      progress::-moz-progress-bar { background: #4caf7d; }
+      #status {
+        margin: 10px 0 0;
+        min-height: 1.5em;
+        font-size: 15px;
+        color: #c9d1d9;
+        overflow-wrap: anywhere;
+      }
+      #messages {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        margin: 20px 0 16px;
+        overflow-y: auto;
+      }
+      .msg {
+        max-width: 85%;
+        padding: 10px 14px;
+        border-radius: 14px;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+      .msg.user {
+        align-self: flex-end;
+        background: #2f6f4f;
+        color: #ffffff;
+        border-bottom-right-radius: 4px;
+      }
+      .msg.assistant {
+        align-self: flex-start;
+        background: #23282e;
+        color: #eceff3;
+        border-bottom-left-radius: 4px;
+      }
+      #chatForm {
+        display: flex;
+        gap: 10px;
+      }
+      #input {
+        flex: 1;
+        min-width: 0;
+        min-height: 54px;
+        padding: 12px 14px;
+        font: inherit;
+        color: #eceff3;
+        background: #1b1f24;
+        border: 1px solid #3a4046;
+        border-radius: 10px;
+      }
+      #input:disabled { opacity: 0.5; }
+      #input::placeholder { color: #7d868f; }
+      #sendBtn {
+        min-height: 54px;
+        padding: 12px 22px;
+        font: inherit;
+        font-weight: 600;
+        color: #ffffff;
+        background: #2f6f4f;
+        border: none;
+        border-radius: 10px;
+        cursor: pointer;
+      }
+      #sendBtn:disabled {
+        background: #3a4046;
+        color: #9aa3ad;
+        cursor: default;
+      }
+      #sendBtn:not(:disabled):active { background: #26593f; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>Chat</h1>
+      <p id="counter"></p>
+      <p class="intro">A small language model that runs on this phone. Your words never leave the device. It is a small mind — good for talk and simple help. It is not Seed and not Revenant.</p>
+
+      <button id="loadBtn" type="button">Load the mind</button>
+      <div id="progressWrap">
+        <progress id="progressBar" max="1" value="0"></progress>
+      </div>
+      <p id="status" role="status"></p>
+
+      <div id="messages" aria-live="polite"></div>
+
+      <form id="chatForm">
+        <input id="input" type="text" placeholder="Type a message" autocomplete="off" disabled />
+        <button id="sendBtn" type="submit" disabled>Send</button>
+      </form>
+    </div>
+
+    <script>
+      (function () {
+        var MODEL_ID = "Qwen2.5-0.5B-Instruct-q4f16_1-MLC";
+        var SYSTEM_PROMPT = "You are a friendly, plain-spoken conversational assistant. Keep your answers short and clear unless the person asks for more. Speak simply, like a person talking. If you do not know something, say so plainly.";
+
+        var counterEl = document.getElementById("counter");
+        var loadBtn = document.getElementById("loadBtn");
+        var progressWrap = document.getElementById("progressWrap");
+        var progressBar = document.getElementById("progressBar");
+        var statusEl = document.getElementById("status");
+        var messagesEl = document.getElementById("messages");
+        var form = document.getElementById("chatForm");
+        var input = document.getElementById("input");
+        var sendBtn = document.getElementById("sendBtn");
+
+        var engine = null;
+        var history = [];
+        var generating = false;
+
+        // Visitor counter: one quiet fetch; any failure leaves it blank.
+        fetch("https://api.countapi.xyz/hit/wizlawz-chatbot/visits")
+          .then(function (res) { return res.json(); })
+          .then(function (data) {
+            if (data && typeof data.value === "number") {
+              counterEl.textContent = "VISITORS: " + data.value;
+            }
+          })
+          .catch(function () { /* stay blank */ });
+
+        // No WebGPU: the browser cannot run it, and nothing is downloaded.
+        if (!navigator.gpu) {
+          loadBtn.disabled = true;
+          statusEl.textContent = "This browser cannot run it — it has no WebGPU. Nothing was downloaded.";
+        }
+
+        loadBtn.addEventListener("click", function () {
+          loadBtn.disabled = true;
+          progressWrap.classList.add("visible");
+          progressBar.value = 0;
+          statusEl.textContent = "Loading…";
+
+          import("https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm@0.2.84/+esm")
+            .then(function (webllm) {
+              return webllm.CreateMLCEngine(MODEL_ID, {
+                initProgressCallback: function (report) {
+                  if (typeof report.progress === "number") {
+                    progressBar.value = report.progress;
+                  }
+                  if (report.text) {
+                    statusEl.textContent = report.text;
+                  }
+                }
+              });
+            })
+            .then(function (eng) {
+              engine = eng;
+              progressBar.value = 1;
+              statusEl.textContent = "Ready. Say hello.";
+              input.disabled = false;
+              sendBtn.disabled = false;
+              input.focus();
+            })
+            .catch(function (err) {
+              statusEl.textContent = "Loading failed: " + (err && err.message ? err.message : String(err));
+              loadBtn.disabled = false;
+            });
+        });
+
+        function addBubble(role, text) {
+          var div = document.createElement("div");
+          div.className = "msg " + role;
+          div.textContent = text;
+          messagesEl.appendChild(div);
+          messagesEl.scrollTop = messagesEl.scrollHeight;
+          return div;
+        }
+
+        function trimHistory() {
+          if (history.length > 20) {
+            history = history.slice(history.length - 20);
+          }
+        }
+
+        form.addEventListener("submit", function (ev) {
+          ev.preventDefault();
+          if (!engine || generating) return;
+          var text = input.value.trim();
+          if (!text) return;
+          input.value = "";
+
+          addBubble("user", text);
+          history.push({ role: "user", content: text });
+          trimHistory();
+
+          var bubble = addBubble("assistant", "");
+          generating = true;
+          sendBtn.disabled = true;
+          input.disabled = true;
+
+          var full = "";
+          var requestMessages = [{ role: "system", content: SYSTEM_PROMPT }].concat(history);
+
+          engine.chat.completions.create({
+            messages: requestMessages,
+            stream: true,
+            temperature: 0.7,
+            max_tokens: 512
+          }).then(function (stream) {
+            var iterator = stream[Symbol.asyncIterator]();
+            function step() {
+              return iterator.next().then(function (result) {
+                if (result.done) {
+                  history.push({ role: "assistant", content: full });
+                  trimHistory();
+                  generating = false;
+                  sendBtn.disabled = false;
+                  input.disabled = false;
+                  input.focus();
+                  return;
+                }
+                var chunk = result.value;
+                var delta = chunk && chunk.choices && chunk.choices[0] && chunk.choices[0].delta
+                  ? chunk.choices[0].delta.content
+                  : "";
+                if (delta) {
+                  full += delta;
+                  bubble.textContent = full;
+                  messagesEl.scrollTop = messagesEl.scrollHeight;
+                }
+                return step();
+              });
+            }
+            return step();
+          }).catch(function (err) {
+            bubble.textContent = full || ("Something went wrong: " + (err && err.message ? err.message : String(err)));
+            generating = false;
+            sendBtn.disabled = false;
+            input.disabled = false;
+          });
+        });
+      })();
+    </script>
+  </body>
+</html>
